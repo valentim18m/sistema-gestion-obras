@@ -1,5 +1,5 @@
 // 1. Importar las librerías necesarias
-require("dotenv").config(); // Carga variables desde el archivo .env
+require("dotenv").config();
 const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
@@ -13,7 +13,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "mi_secreto_super_seguro_123";
 app.use(cors());
 app.use(express.json());
 
-// 2. Configurar conexión MySQL (credenciales desde .env)
+// 2. Configurar conexión MySQL
 const conexion = mysql.createConnection({
   host: process.env.DB_HOST || "localhost",
   user: process.env.DB_USER || "constructora_api",
@@ -25,6 +25,19 @@ conexion.connect((error) => {
   if (error) return console.error("Error MySQL:", error.message);
   console.log("¡Conectado a db_constructora!");
 });
+
+// ==========================================
+// FUNCIÓN AUXILIAR: BITÁCORA DE AUDITORÍA (VERSIÓN CORREGIDA)
+// ==========================================
+const registrarEnBitacora = (idUsuario, accion, detalles) => {
+  if (!idUsuario) return;
+  // Adaptamos los nombres a las columnas EXACTAS de tu tabla
+  const query = `INSERT INTO bitacora_auditoria (id_usuario, accion, tabla_afectada, detalles_anteriores) VALUES (?, ?, ?, ?)`;
+  // Pasamos 'obras' como tabla afectada por defecto
+  conexion.query(query, [idUsuario, accion, "obras", detalles], (err) => {
+    if (err) console.error("Error guardando en bitácora:", err);
+  });
+};
 
 // 3. MIDDLEWARE DE SEGURIDAD
 const verificarToken = (req, res, next) => {
@@ -84,7 +97,7 @@ app.post("/login", (req, res) => {
     }
   });
 });
-// --- RUTA REGISTRO ---
+
 // --- RUTA REGISTRO ---
 app.post("/registro", async (req, res) => {
   const { nombre_completo, email, password } = req.body;
@@ -94,24 +107,20 @@ app.post("/registro", async (req, res) => {
   }
 
   try {
-    // Encriptar la contraseña
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
-    // Insertar en la base de datos (Asumiendo id_rol = 2 para usuario estándar)
     const query =
       "INSERT INTO usuarios (nombre_completo, email, password_hash, id_rol, activo) VALUES (?, ?, ?, 2, 1)";
-
     conexion.query(
       query,
       [nombre_completo, email, password_hash],
       (err, resultados) => {
         if (err) {
-          if (err.code === "ER_DUP_ENTRY") {
+          if (err.code === "ER_DUP_ENTRY")
             return res
               .status(400)
               .json({ error: "El email ya está registrado" });
-          }
           return res.status(500).json({ error: "Error interno del servidor" });
         }
         res.status(201).json({ mensaje: "Usuario registrado con éxito" });
@@ -121,24 +130,20 @@ app.post("/registro", async (req, res) => {
     res.status(500).json({ error: "Error procesando el registro" });
   }
 });
+
 // ==========================================
 // RUTAS DE INVENTARIO Y MATERIALES
 // ==========================================
 
-// 1. Obtener el catálogo de materiales disponibles
 app.get("/materiales", (req, res) => {
   const query = "SELECT id_material, nombre, unidad_medida FROM materiales";
-
   conexion.query(query, (err, resultados) => {
-    if (err) {
-      console.error("Error al obtener materiales:", err);
+    if (err)
       return res.status(500).json({ error: "Error interno del servidor" });
-    }
     res.json(resultados);
   });
 });
 
-// 2. Agregar o sumar material al inventario de una obra específica
 app.post("/obras/:id/inventario", (req, res) => {
   const id_obra = req.params.id;
   const { id_material, cantidad } = req.body;
@@ -149,61 +154,50 @@ app.post("/obras/:id/inventario", (req, res) => {
       .json({ error: "El material y la cantidad son obligatorios" });
   }
 
-  // La magia del ON DUPLICATE KEY UPDATE:
-  // Si el material no está en la obra, lo inserta. Si ya está, le suma la nueva cantidad.
   const query = `
     INSERT INTO inventario_obra (id_obra, id_material, cantidad_disponible) 
     VALUES (?, ?, ?) 
     ON DUPLICATE KEY UPDATE cantidad_disponible = cantidad_disponible + VALUES(cantidad_disponible)
   `;
-
   conexion.query(query, [id_obra, id_material, cantidad], (err, resultados) => {
-    if (err) {
-      console.error("Error al actualizar inventario:", err);
+    if (err)
       return res
         .status(500)
         .json({ error: "Error al actualizar el inventario" });
-    }
     res.status(200).json({ mensaje: "Inventario actualizado correctamente" });
   });
 });
 
-// 3. (Opcional pero recomendado) Obtener el inventario actual de una obra
 app.get("/obras/:id/inventario", (req, res) => {
   const id_obra = req.params.id;
-
-  // ¡Aquí agregamos io.id_material para que el frontend pueda leerlo!
   const query = `
     SELECT io.id_inventario, io.id_material, m.nombre, m.unidad_medida, io.cantidad_disponible 
     FROM inventario_obra io
     JOIN materiales m ON io.id_material = m.id_material
     WHERE io.id_obra = ?
   `;
-
   conexion.query(query, [id_obra], (err, resultados) => {
-    if (err) {
-      console.error("Error al consultar inventario:", err);
+    if (err)
       return res.status(500).json({ error: "Error interno del servidor" });
-    }
     res.json(resultados);
   });
 });
-// 4. Eliminar un material específico de una obra
+
 app.delete("/obras/:id_obra/inventario/:id_material", (req, res) => {
   const { id_obra, id_material } = req.params;
-
   const query =
     "DELETE FROM inventario_obra WHERE id_obra = ? AND id_material = ?";
-
   conexion.query(query, [id_obra, id_material], (err, resultados) => {
-    if (err) {
-      console.error("Error al eliminar material:", err);
+    if (err)
       return res.status(500).json({ error: "Error interno del servidor" });
-    }
     res.status(200).json({ mensaje: "Material eliminado con éxito" });
   });
 });
-// --- RUTAS OBRAS ---
+
+// ==========================================
+// RUTAS DE OBRAS
+// ==========================================
+
 app.get("/obras", verificarToken, (req, res) => {
   const query = "SELECT * FROM obras ORDER BY creado_en DESC";
   conexion.query(query, (err, resultados) => {
@@ -213,26 +207,7 @@ app.get("/obras", verificarToken, (req, res) => {
   });
 });
 
-// ==========================================
-// RUTAS DE OBRAS
-// ==========================================
-
-// ==========================================
-// RUTAS DE OBRAS
-// ==========================================
-
-// GET: Obtener todas las obras
-app.get("/obras", verificarToken, (req, res) => {
-  const query = "SELECT * FROM obras ORDER BY creado_en DESC";
-  conexion.query(query, (err, resultados) => {
-    if (err)
-      return res.status(500).json({ error: "Error obteniendo las obras" });
-    res.json(resultados);
-  });
-});
-
-// POST: Crear una obra nueva
-app.post("/obras", (req, res) => {
+app.post("/obras", verificarToken, (req, res) => {
   const { nombre, direccion, fecha_inicio, fecha_fin_estimada } = req.body;
 
   if (!nombre || !direccion) {
@@ -248,29 +223,25 @@ app.post("/obras", (req, res) => {
     (err, resultados) => {
       if (err)
         return res.status(500).json({ error: "Error al guardar la obra" });
-      res
-        .status(201)
-        .json({
-          mensaje: "Obra creada con éxito",
-          id_obra: resultados.insertId,
-        });
+
+      registrarEnBitacora(req.usuario.id, "CREAR", `Creó la obra: ${nombre}`);
+
+      res.status(201).json({
+        mensaje: "Obra creada con éxito",
+        id_obra: resultados.insertId,
+      });
     },
   );
 });
 
-// PUT: Actualizar una obra existente (Aquí estaba el 404)
-app.put("/obras/:id", (req, res) => {
+app.put("/obras/:id", verificarToken, (req, res) => {
   const id_obra = req.params.id;
   const { nombre, direccion, fecha_inicio, fecha_fin_estimada, estado } =
     req.body;
 
-  if (!nombre || !direccion) {
-    return res
-      .status(400)
-      .json({ error: "El nombre y la dirección son obligatorios" });
-  }
+  if (!nombre || !direccion)
+    return res.status(400).json({ error: "Obligatorios incompletos" });
 
-  // Si la fecha viene vacía, pasamos null para que MySQL no arroje error
   const fechaInicioDB = fecha_inicio ? fecha_inicio : null;
   const fechaFinDB = fecha_fin_estimada ? fecha_fin_estimada : null;
 
@@ -280,16 +251,58 @@ app.put("/obras/:id", (req, res) => {
     query,
     [nombre, direccion, fechaInicioDB, fechaFinDB, estado, id_obra],
     (err, resultados) => {
-      if (err) {
-        console.error("Error SQL al actualizar:", err);
-        return res.status(500).json({ error: "Error interno en la BD" });
-      }
+      if (err) return res.status(500).json({ error: "Error interno en la BD" });
+
+      registrarEnBitacora(
+        req.usuario.id,
+        "EDITAR",
+        `Actualizó la obra #${id_obra} al estado: ${estado}`,
+      );
+
       res.status(200).json({ mensaje: "Obra actualizada correctamente" });
     },
   );
 });
 
 // ==========================================
-// 4. INICIAR EL SERVIDOR (Siempre debe ser la ÚLTIMA línea del archivo)
+// RUTAS DE GESTIÓN DE USUARIOS (PANEL ADMIN)
+// ==========================================
+
+app.get("/usuarios", verificarToken, (req, res) => {
+  // Quitamos la columna 'creado_en' que causaba el error
+  const query =
+    "SELECT id_usuario, nombre_completo, email, id_rol, activo FROM usuarios";
+
+  conexion.query(query, (err, resultados) => {
+    if (err) {
+      console.error("Error SQL al obtener usuarios:", err); // Mostrará el error en la terminal por si acaso
+      return res.status(500).json({ error: "Error obteniendo usuarios" });
+    }
+    res.json(resultados);
+  });
+});
+app.put("/usuarios/:id/rol", verificarToken, (req, res) => {
+  const id_usuario_modificado = req.params.id;
+  const { id_rol } = req.body;
+
+  if (!id_rol)
+    return res.status(400).json({ error: "El nuevo rol es obligatorio" });
+
+  const query = "UPDATE usuarios SET id_rol = ? WHERE id_usuario = ?";
+  conexion.query(query, [id_rol, id_usuario_modificado], (err, resultados) => {
+    if (err) return res.status(500).json({ error: "Error interno en la BD" });
+
+    registrarEnBitacora(
+      req.usuario.id,
+      "CAMBIO ROL",
+      `Actualizó los permisos del usuario #${id_usuario_modificado} al rol ${id_rol}`,
+    );
+
+    res.status(200).json({ mensaje: "Permisos actualizados correctamente" });
+  });
+});
+
+// ==========================================
+// 4. INICIAR EL SERVIDOR
 // ==========================================
 app.listen(puerto, () => console.log(`Servidor en http://localhost:${puerto}`));
