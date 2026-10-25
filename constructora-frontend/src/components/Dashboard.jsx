@@ -4,14 +4,14 @@ import ModalObra from "./ModalObra";
 import ModalDetalles from "./ModalDetalles";
 import PanelUsuarios from "./PanelUsuarios";
 
-// --- ESTILOS INTEGRADOS ---
+// --- ESTILOS INTEGRADOS (Actualizados con Buscador y Filtros) ---
 const styles = `
 .dashboard-container { min-height: 100vh; background-color: #f8fafc; font-family: 'Inter', sans-serif; }
 .topbar { background-color: #ffffff; padding: 1.2rem 2.5rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; }
 .menu-navegacion { display: flex; gap: 15px; align-items: center; }
 .btn-logout { background-color: #fef2f2; color: #ef4444; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; }
 .content { padding: 40px 20px; max-width: 1100px; margin: 0 auto; }
-.header-section { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; }
+.header-section { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .stats-container { display: flex; gap: 20px; margin-bottom: 40px; flex-wrap: wrap; }
 .stat-card { background-color: #ffffff; padding: 20px; border-radius: 12px; border-left: 4px solid; flex: 1; min-width: 200px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 .stat-label { font-size: 0.85rem; color: #64748b; font-weight: 600; text-transform: uppercase; margin-bottom: 8px; }
@@ -23,20 +23,28 @@ const styles = `
 .btn-secondary { background-color: #f1f5f9; color: #1e293b; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem; transition: background 0.2s;}
 .btn-secondary:hover { background-color: #e2e8f0; }
 .btn-outline { background-color: transparent; color: #64748b; border: 1px solid #cbd5e1; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+/* Nuevos estilos para filtros */
+.filtros-container { display: flex; gap: 15px; margin-bottom: 30px; align-items: center; flex-wrap: wrap; background: #fff; padding: 15px 20px; border-radius: 12px; border: 1px solid #e2e8f0;}
+.search-input { flex: 1; min-width: 250px; padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem; outline: none; transition: border-color 0.2s; }
+.search-input:focus { border-color: #2563eb; }
+.btn-filter { background: transparent; border: 1px solid #cbd5e1; color: #64748b; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: all 0.2s; }
+.btn-filter.active { background: #2563eb; color: white; border-color: #2563eb; }
 `;
 
 export default function Dashboard({ usuario, onLogout }) {
-  // Estado para controlar qué pantalla se ve
   const [vistaActiva, setVistaActiva] = useState("obras");
-
   const [obras, setObras] = useState([]);
+
+  // --- NUEVOS ESTADOS PARA BÚSQUEDA Y FILTROS ---
+  const [busqueda, setBusqueda] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("Todos");
+
   const [mostrarModal, setMostrarModal] = useState(false);
   const [obraInventario, setObraInventario] = useState(null);
   const [obraDetalle, setObraDetalle] = useState(null);
   const [rolUsuario, setRolUsuario] = useState(null);
 
   useEffect(() => {
-    // 1. Decodificar el token para obtener el rol
     const token = localStorage.getItem("token");
     if (token) {
       try {
@@ -47,7 +55,6 @@ export default function Dashboard({ usuario, onLogout }) {
         console.error("Error al leer el token:", error);
       }
     }
-    // 2. Cargar las obras
     cargarObras();
   }, []);
 
@@ -75,11 +82,27 @@ export default function Dashboard({ usuario, onLogout }) {
     }
   };
 
+  // --- LÓGICA DE FILTRADO ---
+  const obrasFiltradas = obras.filter((obra) => {
+    // 1. Verificamos si el texto buscado coincide con el nombre o la dirección
+    const textoBuscado = busqueda.toLowerCase();
+    const coincideBusqueda =
+      obra.nombre.toLowerCase().includes(textoBuscado) ||
+      obra.direccion.toLowerCase().includes(textoBuscado);
+
+    // 2. Verificamos si el estado coincide con el filtro seleccionado
+    // Manejamos el caso especial donde el estado es null o vacío (asumimos "Planificación")
+    const estadoObra = obra.estado || "Planificación";
+    const coincideEstado =
+      filtroEstado === "Todos" || estadoObra === filtroEstado;
+
+    return coincideBusqueda && coincideEstado;
+  });
+
   return (
     <div className="dashboard-container">
       <style>{styles}</style>
 
-      {/* BARRA SUPERIOR CON MENÚ DE NAVEGACIÓN */}
       <header className="topbar">
         <h2 style={{ fontSize: "1.25rem", margin: 0, color: "#1e293b" }}>
           🚧 ConstructoraApp
@@ -93,7 +116,6 @@ export default function Dashboard({ usuario, onLogout }) {
             Ver Obras
           </button>
 
-          {/* Si el rol es 1 (Administrador), mostramos el botón de usuarios */}
           {rolUsuario === 1 && (
             <button
               onClick={() => setVistaActiva("usuarios")}
@@ -110,10 +132,8 @@ export default function Dashboard({ usuario, onLogout }) {
       </header>
 
       <main className="content">
-        {/* RENDERIZADO CONDICIONAL: Mostramos Obras o Panel de Usuarios */}
         {vistaActiva === "obras" ? (
           <>
-            {/* PANEL DE INDICADORES ESTADÍSTICOS */}
             <div className="stats-container">
               <div className="stat-card" style={{ borderLeftColor: "#3b82f6" }}>
                 <div className="stat-label">Total Proyectos</div>
@@ -157,44 +177,92 @@ export default function Dashboard({ usuario, onLogout }) {
               )}
             </div>
 
-            <div className="grid-obras">
-              {obras.map((obra) => (
-                <div key={obra.id_obra} className="card-obra">
-                  <div className="badge">{obra.estado || "Planificación"}</div>
-                  <h3 style={{ margin: "10px 0 5px 0", color: "#1e293b" }}>
-                    {obra.nombre}
-                  </h3>
-                  <p
-                    style={{
-                      color: "#64748b",
-                      fontSize: "0.9rem",
-                      marginBottom: "20px",
-                    }}
-                  >
-                    📍 {obra.direccion}
-                  </p>
+            {/* --- BARRA DE BÚSQUEDA Y BOTONES DE FILTRO --- */}
+            <div className="filtros-container">
+              <input
+                type="text"
+                placeholder="Buscar por nombre o dirección..."
+                className="search-input"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+              />
 
-                  <div
-                    style={{ display: "flex", gap: "10px", marginTop: "auto" }}
+              <div style={{ display: "flex", gap: "8px" }}>
+                {[
+                  "Todos",
+                  "Planificación",
+                  "En Ejecución",
+                  "Pausada",
+                  "Finalizada",
+                ].map((estado) => (
+                  <button
+                    key={estado}
+                    className={`btn-filter ${filtroEstado === estado ? "active" : ""}`}
+                    onClick={() => setFiltroEstado(estado)}
                   >
-                    <button
-                      onClick={() => setObraDetalle(obra)}
-                      className="btn-secondary"
-                    >
-                      Ver detalles
-                    </button>
-                    <button
-                      onClick={() => setObraInventario(obra)}
-                      className="btn-outline"
-                    >
-                      Inventario
-                    </button>
-                  </div>
-                </div>
-              ))}
+                    {estado}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Modales ocultos hasta que se activen */}
+            <div className="grid-obras">
+              {/* Cambiamos obras.map por obrasFiltradas.map */}
+              {obrasFiltradas.length > 0 ? (
+                obrasFiltradas.map((obra) => (
+                  <div key={obra.id_obra} className="card-obra">
+                    <div className="badge">
+                      {obra.estado || "Planificación"}
+                    </div>
+                    <h3 style={{ margin: "10px 0 5px 0", color: "#1e293b" }}>
+                      {obra.nombre}
+                    </h3>
+                    <p
+                      style={{
+                        color: "#64748b",
+                        fontSize: "0.9rem",
+                        marginBottom: "20px",
+                      }}
+                    >
+                      📍 {obra.direccion}
+                    </p>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "10px",
+                        marginTop: "auto",
+                      }}
+                    >
+                      <button
+                        onClick={() => setObraDetalle(obra)}
+                        className="btn-secondary"
+                      >
+                        Ver detalles
+                      </button>
+                      <button
+                        onClick={() => setObraInventario(obra)}
+                        className="btn-outline"
+                      >
+                        Inventario
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p
+                  style={{
+                    color: "#64748b",
+                    gridColumn: "1 / -1",
+                    textAlign: "center",
+                    padding: "40px",
+                  }}
+                >
+                  No se encontraron obras que coincidan con la búsqueda.
+                </p>
+              )}
+            </div>
+
             {mostrarModal && (
               <ModalObra
                 onClose={() => setMostrarModal(false)}

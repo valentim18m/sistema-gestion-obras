@@ -144,7 +144,8 @@ app.get("/materiales", (req, res) => {
   });
 });
 
-app.post("/obras/:id/inventario", (req, res) => {
+// 2. Agregar o sumar material al inventario (AHORA CON TRAZABILIDAD)
+app.post("/obras/:id/inventario", verificarToken, (req, res) => {
   const id_obra = req.params.id;
   const { id_material, cantidad } = req.body;
 
@@ -154,18 +155,68 @@ app.post("/obras/:id/inventario", (req, res) => {
       .json({ error: "El material y la cantidad son obligatorios" });
   }
 
-  const query = `
-    INSERT INTO inventario_obra (id_obra, id_material, cantidad_disponible) 
-    VALUES (?, ?, ?) 
-    ON DUPLICATE KEY UPDATE cantidad_disponible = cantidad_disponible + VALUES(cantidad_disponible)
-  `;
-  conexion.query(query, [id_obra, id_material, cantidad], (err, resultados) => {
-    if (err)
-      return res
-        .status(500)
-        .json({ error: "Error al actualizar el inventario" });
-    res.status(200).json({ mensaje: "Inventario actualizado correctamente" });
-  });
+  // Determinamos si es ingreso o egreso (si envían cantidad negativa desde el frontend)
+  const tipo_movimiento = cantidad > 0 ? "INGRESO" : "EGRESO";
+  const id_usuario = req.usuario.id;
+
+  // PASO 1: Crear el movimiento principal
+  const queryMov = `INSERT INTO movimientos (id_obra, id_usuario, tipo_movimiento) VALUES (?, ?, ?)`;
+
+  conexion.query(
+    queryMov,
+    [id_obra, id_usuario, tipo_movimiento],
+    (err, resMov) => {
+      if (err) {
+        // --- AGREGAMOS ESTE CONSOLE.ERROR PARA VER EL PROBLEMA EXACTO ---
+        console.error("❌ ERROR SQL EN MOVIMIENTOS:", err.message);
+        return res
+          .status(500)
+          .json({ error: "Error al registrar el movimiento" });
+      }
+
+      const id_movimiento_generado = resMov.insertId;
+
+      // PASO 2: Guardar el detalle (qué material y qué cantidad)
+      const queryDetalle = `INSERT INTO detalle_movimientos (id_movimiento, id_material, cantidad) VALUES (?, ?, ?)`;
+
+      conexion.query(
+        queryDetalle,
+        [id_movimiento_generado, id_material, cantidad],
+        (errDetalle) => {
+          if (errDetalle) console.error("Error en detalle:", errDetalle); // Fuego y olvido, no detenemos el proceso
+
+          // PASO 3: Actualizar el inventario total (ON DUPLICATE KEY)
+          const queryInventario = `
+        INSERT INTO inventario_obra (id_obra, id_material, cantidad_disponible) 
+        VALUES (?, ?, ?) 
+        ON DUPLICATE KEY UPDATE cantidad_disponible = cantidad_disponible + VALUES(cantidad_disponible)
+      `;
+
+          conexion.query(
+            queryInventario,
+            [id_obra, id_material, cantidad],
+            (errInv) => {
+              if (errInv)
+                return res
+                  .status(500)
+                  .json({ error: "Error al actualizar el stock final" });
+
+              // Registramos en tu bitácora de auditoría general también para tener trazabilidad doble
+              registrarEnBitacora(
+                id_usuario,
+                tipo_movimiento,
+                `Registró un ${tipo_movimiento} de ${cantidad} unidades del material #${id_material} en la obra #${id_obra}`,
+              );
+
+              res.status(200).json({
+                mensaje: "Movimiento de inventario registrado correctamente",
+              });
+            },
+          );
+        },
+      );
+    },
+  );
 });
 
 app.get("/obras/:id/inventario", (req, res) => {
@@ -299,6 +350,48 @@ app.put("/usuarios/:id/rol", verificarToken, (req, res) => {
     );
 
     res.status(200).json({ mensaje: "Permisos actualizados correctamente" });
+  });
+});
+// ==========================================
+// RUTAS DE REPORTES Y EXPORTACIÓN
+// ==========================================
+app.get("/reportes/auditoria", verificarToken, (req, res) => {
+  // Verificamos que solo un Administrador (rol 1) pueda descargar reportes
+  if (req.usuario.rol !== 1) {
+    return res
+      .status(403)
+      .json({ error: "Solo los administradores pueden descargar reportes" });
+  }
+
+  const query = `
+    SELECT b.id_log, u.nombre_completo, b.accion, b.tabla_afectada, b.detalles_anteriores, b.fecha 
+    FROM bitacora_auditoria b
+    LEFT JOIN usuarios u ON b.id_usuario = u.id_usuario
+    ORDER BY b.fecha DESC
+  `;
+
+  conexion.query(query, (err, resultados) => {
+    if (err)
+      return res.status(500).json({ error: "Error generando el reporte" });
+
+    // 1. Armamos las cabeceras del archivo CSV
+    let csv = "\ufeffID_Log;Usuario;Accion;Tabla;Detalles;Fecha\n";
+
+    // 2. Llenamos fila por fila
+    resultados.forEach((fila) => {
+      // Limpiamos ahora los punto y coma del texto para no romper las columnas
+      const detallesLimpios = fila.detalles_anteriores
+        ? fila.detalles_anteriores.replace(/;/g, " ")
+        : "";
+      const usuario = fila.nombre_completo || "Sistema";
+      // Separamos los datos con punto y coma (;)
+      csv += `${fila.id_log};${usuario};${fila.accion};${fila.tabla_afectada};${detallesLimpios};${fila.fecha}\n`;
+    });
+
+    // 3. Forzamos al navegador a descargar el archivo
+    res.header("Content-Type", "text/csv; charset=utf-8");
+    res.attachment("Auditoria_Constructora.csv");
+    return res.send(csv);
   });
 });
 

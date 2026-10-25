@@ -26,6 +26,36 @@ export default function PanelUsuarios() {
       setCargando(false);
     }
   };
+  // ... dentro de tu componente PanelUsuarios, debajo de la función cargarUsuarios ...
+
+  const descargarReporte = async () => {
+    try {
+      const respuesta = await fetch(
+        "http://localhost:3000/reportes/auditoria",
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+
+      if (respuesta.ok) {
+        // Magia para descargar el archivo en React
+        const blob = await respuesta.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "Auditoria_Constructora.csv";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } else {
+        alert("Error al descargar el reporte.");
+      }
+    } catch (error) {
+      console.error("Error en la descarga:", error);
+    }
+  };
+
+  // ... más abajo, en el return, agrega el botón justo debajo del párrafo ...
 
   const cambiarRol = async (idUsuario, nuevoRol) => {
     // Evitamos que un admin se quite el rol a sí mismo por accidente
@@ -64,7 +94,22 @@ export default function PanelUsuarios() {
     <div className="panel-usuarios">
       <h2>Gestión de Accesos</h2>
       <p>Administra los niveles de permiso de tu equipo.</p>
-
+      {/* NUEVO BOTÓN DE EXPORTACIÓN */}
+      <button
+        onClick={descargarReporte}
+        style={{
+          background: "#10b981",
+          color: "white",
+          padding: "10px 15px",
+          border: "none",
+          borderRadius: "8px",
+          cursor: "pointer",
+          fontWeight: "bold",
+          marginBottom: "20px",
+        }}
+      >
+        📥 Descargar Reporte de Auditoría (CSV)
+      </button>
       <table
         style={{
           width: "100%",
